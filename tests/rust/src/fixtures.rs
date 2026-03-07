@@ -1,0 +1,24 @@
+use rand::Rng;
+
+pub const API_BASE: &str = "http://localhost:8081/api/v1";
+pub const GATEWAY_WS: &str = "ws://localhost:8080/ws";
+
+pub fn random_email() -> String {
+    let suffix: u64 = rand::thread_rng().gen();
+    format!("test_{}@example.com", suffix)
+}
+
+pub fn random_name() -> String {
+    let suffix: u64 = rand::thread_rng().gen();
+    format!("TestUser_{}", suffix)
+}
+
+pub fn random_workspace_name() -> String {
+    let suffix: u64 = rand::thread_rng().gen();
+    format!("workspace_{}", suffix)
+}
+
+pub fn random_channel_name() -> String {
+    let suffix: u64 = rand::thread_rng().gen();
+    format!("channel_{}", suffix)
+}
