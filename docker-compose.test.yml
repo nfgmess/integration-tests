@@ -1,0 +1,29 @@
+# Extends the infrastructure docker-compose with test-specific overrides.
+# Usage: docker compose -f ../infrastructure/docker-compose.yml -f docker-compose.test.yml up -d
+
+services:
+  identity-service:
+    image: nfgmess/identity-service:latest
+    build:
+      context: ../identity-service
+    ports:
+      - "8081:8081"
+    environment:
+      - DATABASE_URL=postgres://nfgmess:nfgmess@postgres:5432/nfgmess
+      - JWT_SECRET=test-secret-key
+    depends_on:
+      - postgres
+
+  gateway:
+    image: nfgmess/gateway:latest
+    build:
+      context: ../gateway
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+    environment:
+      - NATS_URL=nats://nats:4222
+      - IDENTITY_SERVICE_URL=http://identity-service:8081
+    depends_on:
+      - nats
+      - identity-service

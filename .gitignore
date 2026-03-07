@@ -1,3 +1,26 @@
+# Rust
 /target
 target/
+
+# Node
 node_modules/
+dist/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Env
+.env*
+
+# Logs
+*.log
