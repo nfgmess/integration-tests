@@ -72,7 +72,18 @@ test.describe('Multi-user scenarios', () => {
     await alicePage.locator('button').filter({ hasText: /^Send$/ }).click();
 
     // Bob should see it
-    await expect(bobPage.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+    const bobMessage = bobPage.locator('.message').filter({ hasText: msg }).last();
+    await expect(bobMessage.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+    await expect(bobMessage.locator('.sender')).toHaveText('Alice', { timeout: 15000 });
+
+    await bobPage.reload();
+    await expect(bobPage).toHaveURL(/\/#\/workspace\//);
+    await expect(bobPage.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible({ timeout: 10000 });
+    await bobPage.locator('.channel-item').filter({ hasText: 'general' }).click();
+
+    const bobMessageAfterReload = bobPage.locator('.message').filter({ hasText: msg }).last();
+    await expect(bobMessageAfterReload.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+    await expect(bobMessageAfterReload.locator('.sender')).toHaveText('Alice', { timeout: 15000 });
 
     await aliceCtx.close();
     await bobCtx.close();
