@@ -19,16 +19,25 @@ export function randomChannelName(): string {
 }
 
 /**
- * Register a user via API (faster than going through UI for setup).
+ * Register a user and login via API (faster than going through UI for setup).
+ * Register returns {user_id, email} (no token), so we login immediately after.
  */
 export async function registerUserViaApi(email: string, password: string, displayName: string) {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+  const regRes = await fetch(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, display_name: displayName }),
   });
-  if (!res.ok) throw new Error(`Register failed: ${res.status} ${await res.text()}`);
-  return res.json() as Promise<{ access_token: string; refresh_token: string; user_id: string }>;
+  if (!regRes.ok) throw new Error(`Register failed: ${regRes.status} ${await regRes.text()}`);
+
+  const loginRes = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!loginRes.ok) throw new Error(`Login failed: ${loginRes.status} ${await loginRes.text()}`);
+  const data = await loginRes.json() as { token: string; refresh_token: string; user_id: string };
+  return { access_token: data.token, refresh_token: data.refresh_token, user_id: data.user_id };
 }
 
 /**
