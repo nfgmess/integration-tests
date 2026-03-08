@@ -111,6 +111,41 @@ async fn join_and_leave_channel() {
 }
 
 #[tokio::test]
+async fn cannot_leave_default_general_channel() {
+    let (client, workspace_id) = setup_workspace().await;
+
+    let general_channel = client
+        .list_channels(&workspace_id)
+        .await
+        .expect("list channels should succeed")
+        .into_iter()
+        .find(|channel| channel.name == "general")
+        .expect("default general channel must exist");
+
+    let response = client
+        .post_raw(
+            &format!("/channels/{}/leave", general_channel.channel_id),
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("leave default channel request should return a response");
+
+    assert_eq!(response.status(), 403, "leave default channel must be forbidden");
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("error response should be valid JSON");
+    let error = body["error"]
+        .as_str()
+        .expect("error response should contain an error message");
+    assert!(
+        error.contains("default channel"),
+        "expected default-channel error, got: {error}"
+    );
+}
+
+#[tokio::test]
 async fn create_dm_between_two_workspace_members() {
     let (owner, workspace_id) = setup_workspace().await;
 

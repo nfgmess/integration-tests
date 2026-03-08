@@ -38,6 +38,30 @@ test.describe('Workspaces and Channels', () => {
     await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
   });
 
+  test('default general channel cannot be left, but regular channels can', async ({ page }) => {
+    await page.locator('a').filter({ hasText: 'Create Workspace' }).click();
+    await page.locator('input[placeholder="Workspace name"]').fill(randomWorkspaceName());
+    await page.locator('button[type="submit"]').click();
+
+    await expect(page).toHaveURL(/\/#\/workspace\//);
+    await expect(page.locator('.header-name')).toContainText('general');
+    await expect(page.locator('button[title="Leave channel"]')).toHaveCount(0);
+
+    await page.locator('button[title="Create channel"]').click();
+    await page.locator('button').filter({ hasText: 'Create a new channel' }).click();
+
+    const chName = randomChannelName();
+    await page.locator('#channel-name').fill(chName);
+    await page.locator('button').filter({ hasText: /Create Channel/ }).click();
+
+    const customChannel = page.locator('.channel-item').filter({ hasText: chName });
+    await expect(customChannel).toBeVisible({ timeout: 10000 });
+    await customChannel.click();
+
+    await expect(page.locator('.header-name')).toContainText(chName);
+    await expect(page.locator('button[title="Leave channel"]')).toBeVisible();
+  });
+
   test('create a new public channel via browser modal', async ({ page }) => {
     // Create workspace first
     await page.locator('a').filter({ hasText: 'Create Workspace' }).click();
