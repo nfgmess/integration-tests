@@ -38,6 +38,18 @@ test.describe('Workspaces and Channels', () => {
     await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
   });
 
+  test('workspace owner can generate an invite link from the workspace view', async ({ page }) => {
+    await page.locator('a').filter({ hasText: 'Create Workspace' }).click();
+    await page.locator('input[placeholder="Workspace name"]').fill(randomWorkspaceName());
+    await page.locator('button[type="submit"]').click();
+
+    await expect(page).toHaveURL(/\/#\/workspace\//);
+    await page.locator('button[title="Invite members and manage workspace"]').click();
+
+    const inviteLinkInput = page.locator('input[readonly]').filter({ hasValue: /#\/invite\// });
+    await expect(inviteLinkInput).toBeVisible({ timeout: 10000 });
+  });
+
   test('default general channel cannot be left, but regular channels can', async ({ page }) => {
     await page.locator('a').filter({ hasText: 'Create Workspace' }).click();
     await page.locator('input[placeholder="Workspace name"]').fill(randomWorkspaceName());
