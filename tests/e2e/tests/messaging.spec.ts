@@ -5,7 +5,7 @@ import {
 } from './helpers';
 
 test.describe('Messaging', () => {
-  test('send a message and see it appear', async ({ page }) => {
+  test('send a message, refresh, and still see it', async ({ page }) => {
     const email = randomEmail();
     const password = 'SecurePass123!';
     const auth = await registerUserViaApi(email, password, randomName());
@@ -28,6 +28,12 @@ test.describe('Messaging', () => {
 
     // Message should appear in the list
     await expect(page.locator('.message-content').filter({ hasText: msgText })).toBeVisible({ timeout: 10000 });
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/#\/workspace\//);
+    await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
+    await page.locator('.channel-item').filter({ hasText: 'general' }).click();
+    await expect(page.locator('.message-content').filter({ hasText: msgText })).toBeVisible({ timeout: 15000 });
   });
 
   test('cross-tab messaging: message sent in one tab appears in another', async ({ browser }) => {
