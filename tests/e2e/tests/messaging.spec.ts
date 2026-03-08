@@ -43,9 +43,18 @@ test.describe('Messaging', () => {
     const page1 = await context1.newPage();
     const page2 = await context2.newPage();
 
+    // Capture console logs for debugging
+    const consoleLogs: string[] = [];
+    page1.on('console', (msg) => consoleLogs.push(`[P1 ${msg.type()}] ${msg.text()}`));
+    page2.on('console', (msg) => consoleLogs.push(`[P2 ${msg.type()}] ${msg.text()}`));
+
     // Login on both
     await loginViaUI(page1, email, password);
     await loginViaUI(page2, email, password);
+
+    // Wait for gateway connections to establish
+    await page1.waitForTimeout(3000);
+    await page2.waitForTimeout(2000);
 
     // Navigate both to the workspace
     await page1.locator('.workspace-list li a').first().click();
@@ -57,12 +66,24 @@ test.describe('Messaging', () => {
     await page1.locator('.channel-item').filter({ hasText: 'general' }).click();
     await page2.locator('.channel-item').filter({ hasText: 'general' }).click();
 
+    // Wait for WS subscription to complete
+    await page1.waitForTimeout(2000);
+    await page2.waitForTimeout(2000);
+
     // Send message from tab1
     const msgText = `Cross-tab msg ${Date.now()}`;
     await page1.locator('textarea[placeholder="Type a message..."]').fill(msgText);
     await page1.locator('button').filter({ hasText: /^Send$/ }).click();
 
     // Verify it appears on tab2
+    const visible = await page2.locator('.message-content').filter({ hasText: msgText }).isVisible({ timeout: 15000 }).catch(() => false);
+    if (!visible) {
+      console.log('=== CONSOLE LOGS ===');
+      for (const log of consoleLogs) {
+        console.log(log);
+      }
+      console.log('=== END CONSOLE LOGS ===');
+    }
     await expect(page2.locator('.message-content').filter({ hasText: msgText })).toBeVisible({ timeout: 15000 });
 
     await context1.close();
