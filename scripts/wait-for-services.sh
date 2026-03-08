@@ -3,6 +3,7 @@ set -euo pipefail
 
 IDENTITY_URL="${IDENTITY_URL:-http://localhost:8081/health}"
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8080/health}"
+WEB_URL="${WEB_URL:-http://localhost:3000/}"
 MAX_WAIT="${MAX_WAIT:-60}"
 
 echo "Waiting for services to be ready..."
@@ -27,5 +28,6 @@ wait_for() {
 
 wait_for "$IDENTITY_URL" "identity-service"
 wait_for "$GATEWAY_URL" "gateway"
+wait_for "$WEB_URL" "web-client"
 
 echo "All services ready."

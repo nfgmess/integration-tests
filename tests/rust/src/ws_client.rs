@@ -3,6 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::time::{timeout, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use wire_protocol::codec::Frame;
+use wire_protocol::decode_payload;
 use wire_protocol::frames;
 
 use crate::fixtures::GATEWAY_WS;
@@ -29,7 +30,11 @@ impl WsTestClient {
     }
 
     pub async fn authenticate(&mut self, token: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({ "token": token }))?;
+        let payload = rmp_serde::to_vec_named(&serde_json::json!({
+            "token": token,
+            "device_id": uuid::Uuid::new_v4().to_string(),
+            "device_name": "integration-tests"
+        }))?;
         let frame = Frame::new(frames::AUTH_REQUEST, 0, Bytes::from(payload));
         self.send_frame(0, &frame).await
     }
@@ -54,6 +59,7 @@ impl WsTestClient {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let content_bytes = content.as_bytes().to_vec();
         let payload = rmp_serde::to_vec_named(&serde_json::json!({
+            "channel_id": conversation_id,
             "content_encrypted": content_bytes,
             "mls_group_id": [],
             "mls_epoch": 0,
@@ -72,6 +78,7 @@ impl WsTestClient {
         action: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let payload = rmp_serde::to_vec_named(&serde_json::json!({
+            "channel_id": conversation_id,
             "message_id": message_id,
             "emoji": emoji,
             "action": action
@@ -89,6 +96,7 @@ impl WsTestClient {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let content_bytes = content.as_bytes().to_vec();
         let payload = rmp_serde::to_vec_named(&serde_json::json!({
+            "channel_id": conversation_id,
             "thread_id": thread_id,
             "content_encrypted": content_bytes,
             "mls_epoch": 0,
@@ -158,11 +166,19 @@ impl WsTestClient {
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
-                return Err(
-                    format!("Timeout waiting for frame type 0x{:02x}", frame_type).into(),
-                );
+                return Err(format!("Timeout waiting for frame type 0x{:02x}", frame_type).into());
             }
             let (stream_id, frame) = self.recv_frame(remaining.as_millis() as u64).await?;
+            if frame.frame_type() == frames::ERROR && frame_type != frames::ERROR {
+                let err = decode_payload::<wire_protocol::schema::system::ErrorFrame>(&frame)
+                    .map(|payload| format!("{} (code {})", payload.message, payload.code))
+                    .unwrap_or_else(|_| "unable to decode error payload".to_string());
+                return Err(format!(
+                    "Received ERROR frame while waiting for type 0x{:02x}: {}",
+                    frame_type, err
+                )
+                .into());
+            }
             if frame.frame_type() == frame_type {
                 return Ok((stream_id, frame));
             }

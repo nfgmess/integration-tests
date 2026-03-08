@@ -1,6 +1,31 @@
 import { type Page, expect } from '@playwright/test';
 
 const API_BASE = process.env.API_BASE || 'http://localhost:8081/api/v1';
+const AUTH_RETRY_ATTEMPTS = 10;
+const AUTH_RETRY_DELAY_MS = 1100;
+const UI_AUTH_COOLDOWN_MS = 1200;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRateLimitRetry(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; attempt < AUTH_RETRY_ATTEMPTS; attempt++) {
+    const response = await fetch(url, init);
+    if (response.status !== 429) {
+      return response;
+    }
+
+    if (attempt === AUTH_RETRY_ATTEMPTS - 1) {
+      return response;
+    }
+
+    await response.text().catch(() => '');
+    await sleep(AUTH_RETRY_DELAY_MS);
+  }
+
+  throw new Error(`Exceeded auth retry budget for ${url}`);
+}
 
 export function randomEmail(): string {
   return `test_${Date.now()}_${Math.random().toString(36).slice(2)}@example.com`;
@@ -23,14 +48,14 @@ export function randomChannelName(): string {
  * Register returns {user_id, email} (no token), so we login immediately after.
  */
 export async function registerUserViaApi(email: string, password: string, displayName: string) {
-  const regRes = await fetch(`${API_BASE}/auth/register`, {
+  const regRes = await fetchWithRateLimitRetry(`${API_BASE}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, display_name: displayName }),
   });
   if (!regRes.ok) throw new Error(`Register failed: ${regRes.status} ${await regRes.text()}`);
 
-  const loginRes = await fetch(`${API_BASE}/auth/login`, {
+  const loginRes = await fetchWithRateLimitRetry(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
@@ -84,6 +109,21 @@ export async function joinWorkspaceViaApi(token: string, workspaceId: string, in
   return res.json() as Promise<{ workspace_id: string; role: string }>;
 }
 
+export async function createDmViaApi(token: string, workspaceId: string, userIds: string[]) {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/dm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ user_ids: userIds }),
+  });
+  if (!res.ok) throw new Error(`Create DM failed: ${res.status} ${await res.text()}`);
+  const data = await res.json() as { channel_id?: string; id?: string; name: string; channel_type: string };
+  return {
+    channel_id: data.channel_id || data.id || '',
+    name: data.name,
+    channel_type: data.channel_type,
+  };
+}
+
 /**
  * Login through the web UI.
  */
@@ -91,9 +131,11 @@ export async function loginViaUI(page: Page, email: string, password: string) {
   await page.goto('/#/login');
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').fill(password);
+  await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
   await page.locator('button[type="submit"]').click();
   // Wait for redirect to home page (workspace list)
   await expect(page).toHaveURL(/\/#\/?$/);
+  await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
 }
 
 /**
@@ -105,7 +147,9 @@ export async function registerViaUI(page: Page, displayName: string, email: stri
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').first().fill(password);
   await page.locator('input[type="password"]').nth(1).fill(password);
+  await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
   await page.locator('button[type="submit"]').click();
   // Wait for redirect to home
   await expect(page).toHaveURL(/\/#\/?$/);
+  await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
 }

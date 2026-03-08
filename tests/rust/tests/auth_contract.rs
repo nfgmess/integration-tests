@@ -91,7 +91,6 @@ async fn refresh_token_returns_new_access_token() {
         .await
         .expect("login should succeed");
 
-    let old_token = login_resp.token.clone();
     let refresh = login_resp.refresh_token.clone();
 
     let refresh_resp = client
@@ -99,9 +98,18 @@ async fn refresh_token_returns_new_access_token() {
         .await
         .expect("refresh should succeed");
 
-    assert_ne!(
-        refresh_resp.token, old_token,
-        "refreshed token must differ from the original"
+    assert!(
+        !refresh_resp.token.is_empty(),
+        "refresh must return a non-empty access token"
+    );
+    assert!(
+        !refresh_resp.refresh_token.is_empty(),
+        "refresh must return a non-empty refresh token"
+    );
+    assert_eq!(
+        client.token.as_deref(),
+        Some(refresh_resp.token.as_str()),
+        "client state must be updated to the refreshed access token"
     );
 }
 

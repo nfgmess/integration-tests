@@ -33,19 +33,15 @@ test.describe('Threads and Reactions', () => {
 
     // Click add reaction button
     const addReactionBtn = message.locator('.add-reaction-btn');
-    if (await addReactionBtn.isVisible()) {
-      await addReactionBtn.click();
+    await expect(addReactionBtn).toBeVisible({ timeout: 5000 });
+    await addReactionBtn.click();
 
-      // If emoji picker is visible, click an emoji from the grid (not the category tabs)
-      const picker = page.locator('.picker-popover');
-      if (await picker.isVisible({ timeout: 3000 }).catch(() => false)) {
-        // Click first emoji-btn in the emoji-grid (not category-tab buttons)
-        await picker.locator('.emoji-grid .emoji-btn').first().click();
+    const picker = page.locator('.picker-popover');
+    await expect(picker).toBeVisible({ timeout: 5000 });
+    await picker.locator('.emoji-grid .emoji-btn').first().click();
 
-        // Reaction chip should appear
-        await expect(message.locator('.reaction-chip')).toBeVisible({ timeout: 5000 });
-      }
-    }
+    // Reaction chip should appear
+    await expect(message.locator('.reaction-chip')).toBeVisible({ timeout: 5000 });
   });
 
   test('open thread panel and reply', async ({ page }) => {
@@ -66,26 +62,25 @@ test.describe('Threads and Reactions', () => {
 
     // Try clicking thread indicator or reply action
     const threadTrigger = message.locator('.thread-indicator, .reply-btn, button[title*="thread"], button[title*="reply"], button[title*="Thread"]');
-    if (await threadTrigger.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-      await threadTrigger.first().click();
+    await expect(threadTrigger.first()).toBeVisible({ timeout: 5000 });
+    await threadTrigger.first().click();
 
-      // Thread panel should open
-      await expect(page.locator('.thread-panel')).toBeVisible({ timeout: 5000 });
+    // Thread panel should open
+    await expect(page.locator('.thread-panel')).toBeVisible({ timeout: 5000 });
 
-      // Parent message should be shown
-      await expect(page.locator('.parent-message .message-content')).toContainText(parentMsg);
+    // Parent message should be shown
+    await expect(page.locator('.parent-message .message-content')).toContainText(parentMsg);
 
-      // Type a reply
-      const replyText = `Reply in thread ${Date.now()}`;
-      await page.locator('.thread-panel textarea[placeholder="Reply in thread..."]').fill(replyText);
-      await page.locator('.thread-panel button').filter({ hasText: 'Reply' }).click();
+    // Type a reply
+    const replyText = `Reply in thread ${Date.now()}`;
+    await page.locator('.thread-panel textarea[placeholder="Reply in thread..."]').fill(replyText);
+    await page.locator('.thread-panel button').filter({ hasText: 'Reply' }).click();
 
-      // Reply should appear
-      await expect(page.locator('.reply .message-content').filter({ hasText: replyText })).toBeVisible({ timeout: 10000 });
+    // Reply should appear
+    await expect(page.locator('.reply .message-content').filter({ hasText: replyText })).toBeVisible({ timeout: 10000 });
 
-      // Close thread panel
-      await page.locator('.thread-panel button[title="Close thread"]').click();
-      await expect(page.locator('.thread-panel')).not.toBeVisible();
-    }
+    // Close thread panel
+    await page.locator('.thread-panel button[title="Close thread"]').click();
+    await expect(page.locator('.thread-panel')).not.toBeVisible();
   });
 });

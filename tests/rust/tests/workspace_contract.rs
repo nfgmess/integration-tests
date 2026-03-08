@@ -22,7 +22,10 @@ async fn create_workspace_returns_workspace_id_and_name() {
         .await
         .expect("create workspace should succeed");
 
-    assert!(!resp.workspace_id.is_empty(), "workspace_id must be non-empty");
+    assert!(
+        !resp.workspace_id.is_empty(),
+        "workspace_id must be non-empty"
+    );
     assert_eq!(resp.name, ws_name);
 }
 

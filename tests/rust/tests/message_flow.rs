@@ -38,7 +38,7 @@ async fn sender_sends_message_receiver_gets_event_batch() {
         .as_str()
         .expect("invite must have a code field");
     user_b
-        .accept_invite(invite_code)
+        .accept_invite(&ws.workspace_id, invite_code)
         .await
         .expect("accept invite should succeed");
     user_b

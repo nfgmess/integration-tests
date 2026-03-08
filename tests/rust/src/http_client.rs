@@ -1,8 +1,12 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::time::{sleep, Duration};
 
 use crate::fixtures::API_BASE;
+
+const AUTH_RATE_LIMIT_RETRIES: usize = 10;
+const AUTH_RATE_LIMIT_DELAY: Duration = Duration::from_millis(1_100);
 
 #[derive(Debug, Clone)]
 pub struct HttpTestClient {
@@ -29,7 +33,9 @@ struct LoginRequest {
 pub struct AuthResponse {
     pub token: String,
     pub refresh_token: String,
+    #[serde(default)]
     pub user_id: String,
+    #[serde(default)]
     pub device_id: String,
 }
 
@@ -41,6 +47,7 @@ pub struct RegisterResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceResponse {
+    #[serde(alias = "id")]
     pub workspace_id: String,
     pub name: String,
     pub slug: String,
@@ -67,6 +74,29 @@ impl HttpTestClient {
         format!("Bearer {}", self.token.as_deref().unwrap_or(""))
     }
 
+    async fn send_with_rate_limit_retry<F>(
+        &self,
+        mut build: F,
+    ) -> Result<reqwest::Response, reqwest::Error>
+    where
+        F: FnMut() -> reqwest::RequestBuilder,
+    {
+        for attempt in 0..AUTH_RATE_LIMIT_RETRIES {
+            let resp = build().send().await?;
+            if resp.status().as_u16() != 429 {
+                return resp.error_for_status();
+            }
+
+            if attempt + 1 == AUTH_RATE_LIMIT_RETRIES {
+                return resp.error_for_status();
+            }
+
+            sleep(AUTH_RATE_LIMIT_DELAY).await;
+        }
+
+        unreachable!("auth retry loop must return before exhausting")
+    }
+
     pub async fn register(
         &mut self,
         email: &str,
@@ -74,16 +104,16 @@ impl HttpTestClient {
         display_name: &str,
     ) -> Result<RegisterResponse, reqwest::Error> {
         let resp = self
-            .client
-            .post(format!("{}/auth/register", self.base_url))
-            .json(&RegisterRequest {
-                email: email.to_string(),
-                password: password.to_string(),
-                display_name: display_name.to_string(),
+            .send_with_rate_limit_retry(|| {
+                self.client
+                    .post(format!("{}/auth/register", self.base_url))
+                    .json(&RegisterRequest {
+                        email: email.to_string(),
+                        password: password.to_string(),
+                        display_name: display_name.to_string(),
+                    })
             })
-            .send()
             .await?
-            .error_for_status()?
             .json::<RegisterResponse>()
             .await?;
         Ok(resp)
@@ -105,15 +135,15 @@ impl HttpTestClient {
         password: &str,
     ) -> Result<AuthResponse, reqwest::Error> {
         let resp = self
-            .client
-            .post(format!("{}/auth/login", self.base_url))
-            .json(&LoginRequest {
-                email: email.to_string(),
-                password: password.to_string(),
+            .send_with_rate_limit_retry(|| {
+                self.client
+                    .post(format!("{}/auth/login", self.base_url))
+                    .json(&LoginRequest {
+                        email: email.to_string(),
+                        password: password.to_string(),
+                    })
             })
-            .send()
             .await?
-            .error_for_status()?
             .json::<AuthResponse>()
             .await?;
         self.token = Some(resp.token.clone());
@@ -126,22 +156,19 @@ impl HttpTestClient {
         refresh_token: &str,
     ) -> Result<AuthResponse, reqwest::Error> {
         let resp = self
-            .client
-            .post(format!("{}/auth/refresh", self.base_url))
-            .json(&serde_json::json!({ "refresh_token": refresh_token }))
-            .send()
+            .send_with_rate_limit_retry(|| {
+                self.client
+                    .post(format!("{}/auth/refresh", self.base_url))
+                    .json(&serde_json::json!({ "refresh_token": refresh_token }))
+            })
             .await?
-            .error_for_status()?
             .json::<AuthResponse>()
             .await?;
         self.token = Some(resp.token.clone());
         Ok(resp)
     }
 
-    pub async fn create_workspace(
-        &self,
-        name: &str,
-    ) -> Result<WorkspaceResponse, reqwest::Error> {
+    pub async fn create_workspace(&self, name: &str) -> Result<WorkspaceResponse, reqwest::Error> {
         self.client
             .post(format!("{}/workspaces", self.base_url))
             .header("Authorization", self.auth_header())
@@ -241,16 +268,14 @@ impl HttpTestClient {
             .await
     }
 
-    pub async fn create_invite(
-        &self,
-        workspace_id: &str,
-    ) -> Result<Value, reqwest::Error> {
+    pub async fn create_invite(&self, workspace_id: &str) -> Result<Value, reqwest::Error> {
         self.client
             .post(format!(
-                "{}/workspaces/{}/invites",
+                "{}/workspaces/{}/invite",
                 self.base_url, workspace_id
             ))
             .header("Authorization", self.auth_header())
+            .json(&serde_json::json!({}))
             .send()
             .await?
             .error_for_status()?
@@ -258,13 +283,18 @@ impl HttpTestClient {
             .await
     }
 
-    pub async fn accept_invite(&self, invite_code: &str) -> Result<Value, reqwest::Error> {
+    pub async fn accept_invite(
+        &self,
+        workspace_id: &str,
+        invite_code: &str,
+    ) -> Result<Value, reqwest::Error> {
         self.client
             .post(format!(
-                "{}/invites/{}/accept",
-                self.base_url, invite_code
+                "{}/workspaces/{}/join",
+                self.base_url, workspace_id
             ))
             .header("Authorization", self.auth_header())
+            .json(&serde_json::json!({ "code": invite_code }))
             .send()
             .await?
             .error_for_status()?

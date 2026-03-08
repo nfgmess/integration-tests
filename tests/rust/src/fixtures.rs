@@ -1,7 +1,7 @@
 use rand::Rng;
 
 pub const API_BASE: &str = "http://localhost:8081/api/v1";
-pub const GATEWAY_WS: &str = "ws://localhost:8080/ws";
+pub const GATEWAY_WS: &str = "ws://localhost:8443/ws";
 
 pub fn random_email() -> String {
     let suffix: u64 = rand::thread_rng().gen();
@@ -20,5 +20,5 @@ pub fn random_workspace_name() -> String {
 
 pub fn random_channel_name() -> String {
     let suffix: u64 = rand::thread_rng().gen();
-    format!("channel_{}", suffix)
+    format!("channel-{}", suffix)
 }

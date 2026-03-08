@@ -94,7 +94,7 @@ async fn join_and_leave_channel() {
         .expect("register_and_login second user should succeed");
 
     user2
-        .accept_invite(invite_code)
+        .accept_invite(&workspace_id, invite_code)
         .await
         .expect("accept invite should succeed");
 
@@ -131,7 +131,7 @@ async fn create_dm_between_two_workspace_members() {
         .expect("register_and_login second user should succeed");
 
     user2
-        .accept_invite(invite_code)
+        .accept_invite(&workspace_id, invite_code)
         .await
         .expect("accept invite should succeed");
 

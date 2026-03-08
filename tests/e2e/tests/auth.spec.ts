@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { randomEmail, randomName, registerViaUI, loginViaUI } from './helpers';
+import { randomEmail, randomName, registerViaUI, loginViaUI, registerUserViaApi } from './helpers';
 
 test.describe('Authentication', () => {
   test('register a new user through UI', async ({ page }) => {
@@ -14,26 +14,18 @@ test.describe('Authentication', () => {
 
   test('login with valid credentials', async ({ page }) => {
     const email = randomEmail();
-    const name = randomName();
+    const password = 'SecurePass123!';
 
-    // Register first via UI
-    await registerViaUI(page, name, email, 'SecurePass123!');
-
-    // Logout
-    await page.locator('button').filter({ hasText: 'Logout' }).click();
-    await expect(page).toHaveURL(/\/#\/login/);
+    await registerUserViaApi(email, password, randomName());
 
     // Login
-    await loginViaUI(page, email, 'SecurePass123!');
+    await loginViaUI(page, email, password);
     await expect(page.locator('h2')).toContainText('Your Workspaces');
   });
 
   test('login with wrong password shows error', async ({ page }) => {
     const email = randomEmail();
-    await registerViaUI(page, randomName(), email, 'SecurePass123!');
-
-    // Logout
-    await page.locator('button').filter({ hasText: 'Logout' }).click();
+    await registerUserViaApi(email, 'SecurePass123!', randomName());
 
     // Try wrong password
     await page.goto('/#/login');
@@ -56,7 +48,10 @@ test.describe('Authentication', () => {
   });
 
   test('logout returns to login page', async ({ page }) => {
-    await registerViaUI(page, randomName(), randomEmail(), 'SecurePass123!');
+    const email = randomEmail();
+    const password = 'SecurePass123!';
+    await registerUserViaApi(email, password, randomName());
+    await loginViaUI(page, email, password);
     await page.locator('button').filter({ hasText: 'Logout' }).click();
     await expect(page).toHaveURL(/\/#\/login/);
   });

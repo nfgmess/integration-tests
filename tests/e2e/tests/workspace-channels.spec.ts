@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   randomEmail, randomName, randomWorkspaceName, randomChannelName,
-  registerViaUI, loginViaUI, registerUserViaApi, createWorkspaceViaApi,
+  loginViaUI, registerUserViaApi,
 } from './helpers';
 
 test.describe('Workspaces and Channels', () => {
@@ -11,7 +11,8 @@ test.describe('Workspaces and Channels', () => {
   test.beforeEach(async ({ page }) => {
     email = randomEmail();
     password = 'SecurePass123!';
-    await registerViaUI(page, randomName(), email, password);
+    await registerUserViaApi(email, password, randomName());
+    await loginViaUI(page, email, password);
   });
 
   test('create a workspace', async ({ page }) => {

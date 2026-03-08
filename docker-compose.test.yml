@@ -1,5 +1,5 @@
-# Extends the infrastructure docker-compose with test-specific overrides.
-# Usage: docker compose -f ../infrastructure/docker-compose.yml -f docker-compose.test.yml up -d
+# Extends the local-dev infrastructure compose with test-specific overrides.
+# Usage: docker compose -f ../infrastructure/local-dev/docker-compose.yml -f docker-compose.test.yml up -d
 
 services:
   identity-service:
@@ -24,6 +24,16 @@ services:
     environment:
       - NATS_URL=nats://nats:4222
       - IDENTITY_SERVICE_URL=http://identity-service:8081
+      - JWT_SECRET=test-secret-key
     depends_on:
       - nats
       - identity-service
+
+  web-client:
+    image: nfgmess/web-client:latest
+    build:
+      context: ../web-client
+    ports:
+      - "3000:80"
+    depends_on:
+      - gateway
