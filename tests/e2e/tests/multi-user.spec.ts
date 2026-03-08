@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   randomEmail, randomName, randomWorkspaceName,
-  registerUserViaApi, createWorkspaceViaApi, createInviteViaApi, loginViaUI,
+  registerUserViaApi, createWorkspaceViaApi, createInviteViaApi, joinWorkspaceViaApi, loginViaUI,
 } from './helpers';
 
 test.describe('Multi-user scenarios', () => {
@@ -43,11 +43,8 @@ test.describe('Multi-user scenarios', () => {
     const bobPassword = 'SecurePass123!';
     const bobAuth = await registerUserViaApi(bobEmail, bobPassword, 'Bob');
 
-    // Bob accepts invite via API
-    await fetch(`http://localhost:8081/api/v1/invites/${invite.invite_code}/accept`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobAuth.access_token}` },
-    });
+    // Bob joins workspace via API
+    await joinWorkspaceViaApi(bobAuth.access_token, ws.workspace_id, invite.invite_code);
 
     // Open two browser sessions
     const aliceCtx = await browser.newContext();
@@ -91,10 +88,7 @@ test.describe('Multi-user scenarios', () => {
     const bobEmail = randomEmail();
     const bobPassword = 'SecurePass123!';
     const bobAuth = await registerUserViaApi(bobEmail, bobPassword, 'Bob DM');
-    await fetch(`http://localhost:8081/api/v1/invites/${invite.invite_code}/accept`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${bobAuth.access_token}` },
-    });
+    await joinWorkspaceViaApi(bobAuth.access_token, ws.workspace_id, invite.invite_code);
 
     // Alice opens browser
     const aliceCtx = await browser.newContext();

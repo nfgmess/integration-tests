@@ -36,11 +36,11 @@ test.describe('Threads and Reactions', () => {
     if (await addReactionBtn.isVisible()) {
       await addReactionBtn.click();
 
-      // If emoji picker is visible, click an emoji
+      // If emoji picker is visible, click an emoji from the grid (not the category tabs)
       const picker = page.locator('.picker-popover');
       if (await picker.isVisible({ timeout: 3000 }).catch(() => false)) {
-        // Click first emoji in picker
-        await picker.locator('button').first().click();
+        // Click first emoji-btn in the emoji-grid (not category-tab buttons)
+        await picker.locator('.emoji-grid .emoji-btn').first().click();
 
         // Reaction chip should appear
         await expect(message.locator('.reaction-chip')).toBeVisible({ timeout: 5000 });

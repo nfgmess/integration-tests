@@ -49,20 +49,39 @@ export async function createWorkspaceViaApi(token: string, name: string) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ name }),
   });
-  if (!res.ok) throw new Error(`Create workspace failed: ${res.status}`);
-  return res.json() as Promise<{ workspace_id: string; name: string; slug: string }>;
+  if (!res.ok) throw new Error(`Create workspace failed: ${res.status} ${await res.text()}`);
+  const data = await res.json() as { id: string; name: string; slug: string };
+  return { workspace_id: data.id, name: data.name, slug: data.slug };
 }
 
 /**
  * Create invite via API.
+ * Actual endpoint: POST /workspaces/{workspace_id}/invite (singular)
+ * Response: { id, code, workspace_id, max_uses, use_count, expires_at }
  */
 export async function createInviteViaApi(token: string, workspaceId: string) {
-  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/invites`, {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/invite`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error(`Create invite failed: ${res.status}`);
-  return res.json() as Promise<{ invite_code: string }>;
+  if (!res.ok) throw new Error(`Create invite failed: ${res.status} ${await res.text()}`);
+  const data = await res.json() as { id: string; code: string; workspace_id: string };
+  return { invite_code: data.code, workspace_id: data.workspace_id };
+}
+
+/**
+ * Join workspace via invite code (API).
+ * Actual endpoint: POST /workspaces/{workspace_id}/join with body { code }
+ */
+export async function joinWorkspaceViaApi(token: string, workspaceId: string, inviteCode: string) {
+  const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ code: inviteCode }),
+  });
+  if (!res.ok) throw new Error(`Join workspace failed: ${res.status} ${await res.text()}`);
+  return res.json() as Promise<{ workspace_id: string; role: string }>;
 }
 
 /**
