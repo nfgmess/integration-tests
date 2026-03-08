@@ -2,7 +2,7 @@ use integration_tests::fixtures::{random_email, random_name};
 use integration_tests::http_client::HttpTestClient;
 
 #[tokio::test]
-async fn register_creates_user_and_returns_tokens() {
+async fn register_creates_user_and_returns_user_id() {
     let mut client = HttpTestClient::new();
     let email = random_email();
     let name = random_name();
@@ -12,9 +12,9 @@ async fn register_creates_user_and_returns_tokens() {
         .await
         .expect("register should succeed");
 
-    assert!(!resp.access_token.is_empty(), "access_token must be non-empty");
-    assert!(!resp.refresh_token.is_empty(), "refresh_token must be non-empty");
     assert!(!resp.user_id.is_empty(), "user_id must be non-empty");
+    assert_eq!(resp.email, email, "email must match the registered email");
+    assert!(client.token.is_none(), "register must NOT set a token");
 }
 
 #[tokio::test]
@@ -52,7 +52,7 @@ async fn login_with_valid_credentials_returns_tokens() {
         .await
         .expect("login should succeed");
 
-    assert!(!resp.access_token.is_empty());
+    assert!(!resp.token.is_empty());
     assert!(!resp.refresh_token.is_empty());
     assert!(!resp.user_id.is_empty());
 }
@@ -79,14 +79,20 @@ async fn refresh_token_returns_new_access_token() {
     let mut client = HttpTestClient::new();
     let email = random_email();
     let name = random_name();
+    let password = "Str0ngP@ss!";
 
-    let register_resp = client
-        .register(&email, "Str0ngP@ss!", &name)
+    client
+        .register(&email, password, &name)
         .await
         .expect("register should succeed");
 
-    let old_access_token = register_resp.access_token.clone();
-    let refresh = register_resp.refresh_token.clone();
+    let login_resp = client
+        .login(&email, password)
+        .await
+        .expect("login should succeed");
+
+    let old_token = login_resp.token.clone();
+    let refresh = login_resp.refresh_token.clone();
 
     let refresh_resp = client
         .refresh_token(&refresh)
@@ -94,8 +100,8 @@ async fn refresh_token_returns_new_access_token() {
         .expect("refresh should succeed");
 
     assert_ne!(
-        refresh_resp.access_token, old_access_token,
-        "refreshed access_token must differ from the original"
+        refresh_resp.token, old_token,
+        "refreshed token must differ from the original"
     );
 }
 

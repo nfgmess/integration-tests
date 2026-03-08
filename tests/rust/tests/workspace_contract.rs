@@ -6,9 +6,9 @@ async fn authenticated_client() -> HttpTestClient {
     let email = random_email();
     let name = random_name();
     client
-        .register(&email, "Str0ngP@ss!", &name)
+        .register_and_login(&email, "Str0ngP@ss!", &name)
         .await
-        .expect("register should succeed");
+        .expect("register_and_login should succeed");
     client
 }
 

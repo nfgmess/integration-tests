@@ -11,9 +11,9 @@ async fn auth_then_subscribe_produces_auth_ack_and_subscribe_ack() {
     let mut http = HttpTestClient::new();
     let email = random_email();
     let name = random_name();
-    http.register(&email, "Str0ngP@ss!", &name)
+    http.register_and_login(&email, "Str0ngP@ss!", &name)
         .await
-        .expect("register should succeed");
+        .expect("register_and_login should succeed");
 
     let ws = http
         .create_workspace(&random_workspace_name())

@@ -8,9 +8,9 @@ async fn setup_workspace() -> (HttpTestClient, String) {
     let email = random_email();
     let name = random_name();
     client
-        .register(&email, "Str0ngP@ss!", &name)
+        .register_and_login(&email, "Str0ngP@ss!", &name)
         .await
-        .expect("register should succeed");
+        .expect("register_and_login should succeed");
 
     let ws_name = random_workspace_name();
     let ws = client
@@ -89,9 +89,9 @@ async fn join_and_leave_channel() {
     // Register a second user and accept the invite
     let mut user2 = HttpTestClient::new();
     user2
-        .register(&random_email(), "Str0ngP@ss!", &random_name())
+        .register_and_login(&random_email(), "Str0ngP@ss!", &random_name())
         .await
-        .expect("register second user should succeed");
+        .expect("register_and_login second user should succeed");
 
     user2
         .accept_invite(invite_code)
@@ -126,9 +126,9 @@ async fn create_dm_between_two_workspace_members() {
     // Register second user and accept invite
     let mut user2 = HttpTestClient::new();
     user2
-        .register(&random_email(), "Str0ngP@ss!", &random_name())
+        .register_and_login(&random_email(), "Str0ngP@ss!", &random_name())
         .await
-        .expect("register second user should succeed");
+        .expect("register_and_login second user should succeed");
 
     user2
         .accept_invite(invite_code)

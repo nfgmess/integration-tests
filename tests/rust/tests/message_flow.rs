@@ -8,9 +8,9 @@ use wire_protocol::frames;
 /// Helper: register user, create or join workspace, return (http_client, token)
 async fn register_user() -> HttpTestClient {
     let mut http = HttpTestClient::new();
-    http.register(&random_email(), "Str0ngP@ss!", &random_name())
+    http.register_and_login(&random_email(), "Str0ngP@ss!", &random_name())
         .await
-        .expect("register should succeed");
+        .expect("register_and_login should succeed");
     http
 }
 

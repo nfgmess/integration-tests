@@ -27,9 +27,16 @@ struct LoginRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct AuthResponse {
-    pub access_token: String,
+    pub token: String,
     pub refresh_token: String,
     pub user_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterResponse {
+    pub user_id: String,
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,7 +72,7 @@ impl HttpTestClient {
         email: &str,
         password: &str,
         display_name: &str,
-    ) -> Result<AuthResponse, reqwest::Error> {
+    ) -> Result<RegisterResponse, reqwest::Error> {
         let resp = self
             .client
             .post(format!("{}/auth/register", self.base_url))
@@ -77,11 +84,19 @@ impl HttpTestClient {
             .send()
             .await?
             .error_for_status()?
-            .json::<AuthResponse>()
+            .json::<RegisterResponse>()
             .await?;
-        self.token = Some(resp.access_token.clone());
-        self.user_id = Some(resp.user_id.clone());
         Ok(resp)
+    }
+
+    pub async fn register_and_login(
+        &mut self,
+        email: &str,
+        password: &str,
+        display_name: &str,
+    ) -> Result<AuthResponse, reqwest::Error> {
+        self.register(email, password, display_name).await?;
+        self.login(email, password).await
     }
 
     pub async fn login(
@@ -101,7 +116,7 @@ impl HttpTestClient {
             .error_for_status()?
             .json::<AuthResponse>()
             .await?;
-        self.token = Some(resp.access_token.clone());
+        self.token = Some(resp.token.clone());
         self.user_id = Some(resp.user_id.clone());
         Ok(resp)
     }
@@ -119,7 +134,7 @@ impl HttpTestClient {
             .error_for_status()?
             .json::<AuthResponse>()
             .await?;
-        self.token = Some(resp.access_token.clone());
+        self.token = Some(resp.token.clone());
         Ok(resp)
     }
 
