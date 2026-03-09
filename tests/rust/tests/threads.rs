@@ -209,7 +209,10 @@ async fn thread_history_is_separate_from_channel_history() {
         channel_history_ok = channel_history.thread_id.is_none()
             && channel_messages
                 .iter()
-                .any(|message| message.message_id == parent_message.message_id)
+                .any(|message| {
+                    message.message_id == parent_message.message_id
+                        && message.reply_count == Some(1)
+                })
             && channel_messages
                 .iter()
                 .all(|message| message.thread_id.is_none());

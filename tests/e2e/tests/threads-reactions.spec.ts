@@ -205,6 +205,8 @@ test.describe('Threads and Reactions', () => {
 
     const reloadedParentMessage = page.locator('.message').filter({ hasText: parentMsg }).last();
     await expect(reloadedParentMessage.locator('.message-content').filter({ hasText: parentMsg })).toBeVisible({ timeout: 15000 });
+    await expect(reloadedParentMessage.locator('.thread-indicator')).toBeVisible({ timeout: 15000 });
+    await expect(reloadedParentMessage.locator('.thread-indicator .thread-count')).toHaveText('1 reply', { timeout: 15000 });
     await expect(page.locator('.message-list .message-content').filter({ hasText: replyText })).toHaveCount(0);
     await reloadedParentMessage.hover();
 
@@ -267,6 +269,8 @@ test.describe('Threads and Reactions', () => {
 
     const reloadedParentMessage = page2.locator('.message').filter({ hasText: parentMsg }).last();
     await expect(reloadedParentMessage.locator('.message-content').filter({ hasText: parentMsg })).toBeVisible({ timeout: 15000 });
+    await expect(reloadedParentMessage.locator('.thread-indicator')).toBeVisible({ timeout: 15000 });
+    await expect(reloadedParentMessage.locator('.thread-indicator .thread-count')).toHaveText('1 reply', { timeout: 15000 });
     await expect(page2.locator('.message-list .message-content').filter({ hasText: replyText })).toHaveCount(0);
     await reloadedParentMessage.hover();
 
