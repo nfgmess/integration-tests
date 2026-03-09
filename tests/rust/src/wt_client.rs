@@ -12,6 +12,7 @@ use wire_protocol::decode_payload;
 use wire_protocol::frames;
 
 use crate::fixtures::{GATEWAY_WEBTRANSPORT, GATEWAY_WEBTRANSPORT_INFO};
+use crate::perf::{measure_async_result, perf_meta};
 
 const STREAM_LENGTH_PREFIX_SIZE: usize = 4;
 const HANDSHAKE_CONTROL: u8 = 0x00;
@@ -49,51 +50,66 @@ struct CertificateHashInfo {
 
 impl WtTestClient {
     pub async fn connect() -> Result<Self, Box<dyn std::error::Error>> {
-        let _ =
-            web_transport_quinn::quinn::rustls::crypto::aws_lc_rs::default_provider()
-                .install_default();
-        let certificate_hashes = load_server_certificate_hashes().await?;
-        let client = Client::new().server_certificate_hashes(certificate_hashes);
-        let session = client.connect(&Url::parse(GATEWAY_WEBTRANSPORT)?).await?;
+        measure_async_result(
+            "wt.connect",
+            perf_meta(&[("endpoint", serde_json::json!(GATEWAY_WEBTRANSPORT))]),
+            async {
+                let _ =
+                    web_transport_quinn::quinn::rustls::crypto::aws_lc_rs::default_provider()
+                        .install_default();
+                let certificate_hashes = load_server_certificate_hashes().await?;
+                let client = Client::new().server_certificate_hashes(certificate_hashes);
+                let session = client.connect(&Url::parse(GATEWAY_WEBTRANSPORT)?).await?;
 
-        let senders = Arc::new(Mutex::new(HashMap::new()));
-        let (frame_tx, frame_rx) = mpsc::unbounded_channel();
-        let (opened_stream_tx, opened_stream_rx) = mpsc::unbounded_channel();
+                let senders = Arc::new(Mutex::new(HashMap::new()));
+                let (frame_tx, frame_rx) = mpsc::unbounded_channel();
+                let (opened_stream_tx, opened_stream_rx) = mpsc::unbounded_channel();
 
-        open_stream(
-            session.clone(),
-            senders.clone(),
-            frame_tx.clone(),
-            WS_STREAM_CONTROL,
+                open_stream(
+                    session.clone(),
+                    senders.clone(),
+                    frame_tx.clone(),
+                    WS_STREAM_CONTROL,
+                )
+                .await?;
+                open_stream(session.clone(), senders.clone(), frame_tx.clone(), WS_STREAM_SYNC)
+                    .await?;
+
+                spawn_incoming_stream_acceptor(
+                    session.clone(),
+                    senders.clone(),
+                    frame_tx.clone(),
+                    opened_stream_tx,
+                );
+                spawn_datagram_reader(session.clone(), frame_tx.clone());
+
+                Ok(Self {
+                    session,
+                    senders,
+                    frame_tx,
+                    frame_rx,
+                    opened_stream_rx,
+                })
+            },
         )
-        .await?;
-        open_stream(session.clone(), senders.clone(), frame_tx.clone(), WS_STREAM_SYNC).await?;
-
-        spawn_incoming_stream_acceptor(
-            session.clone(),
-            senders.clone(),
-            frame_tx.clone(),
-            opened_stream_tx,
-        );
-        spawn_datagram_reader(session.clone(), frame_tx.clone());
-
-        Ok(Self {
-            session,
-            senders,
-            frame_tx,
-            frame_rx,
-            opened_stream_rx,
-        })
+        .await
     }
 
     pub async fn authenticate(&mut self, token: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "token": token,
-            "device_id": uuid::Uuid::new_v4().to_string(),
-            "device_name": "integration-tests"
-        }))?;
-        let frame = Frame::new(frames::AUTH_REQUEST, 0, Bytes::from(payload));
-        self.send_frame(WS_STREAM_CONTROL, &frame).await
+        measure_async_result(
+            "wt.authenticate_send",
+            perf_meta(&[]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "token": token,
+                    "device_id": uuid::Uuid::new_v4().to_string(),
+                    "device_name": "integration-tests"
+                }))?;
+                let frame = Frame::new(frames::AUTH_REQUEST, 0, Bytes::from(payload));
+                self.send_frame(WS_STREAM_CONTROL, &frame).await
+            },
+        )
+        .await
     }
 
     pub async fn subscribe(
@@ -101,12 +117,19 @@ impl WtTestClient {
         conversation_ids: &[&str],
         tenant_id: Option<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "conversation_ids": conversation_ids,
-            "tenant_id": tenant_id
-        }))?;
-        let frame = Frame::new(frames::SUBSCRIBE, 0, Bytes::from(payload));
-        self.send_frame(WS_STREAM_CONTROL, &frame).await
+        measure_async_result(
+            "wt.subscribe_send",
+            perf_meta(&[("conversation_count", serde_json::json!(conversation_ids.len()))]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "conversation_ids": conversation_ids,
+                    "tenant_id": tenant_id
+                }))?;
+                let frame = Frame::new(frames::SUBSCRIBE, 0, Bytes::from(payload));
+                self.send_frame(WS_STREAM_CONTROL, &frame).await
+            },
+        )
+        .await
     }
 
     pub async fn send_message(
@@ -114,16 +137,23 @@ impl WtTestClient {
         conversation_id: &str,
         content: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "channel_id": conversation_id,
-            "content_encrypted": content.as_bytes(),
-            "mls_group_id": [],
-            "mls_epoch": 0,
-            "mls_sender_leaf": 0
-        }))?;
-        let frame = Frame::new(frames::MESSAGE_SEND, 0, Bytes::from(payload));
-        let stream_id = conversation_stream_id(conversation_id);
-        self.send_frame(stream_id, &frame).await
+        measure_async_result(
+            "wt.message_send",
+            perf_meta(&[("content_bytes", serde_json::json!(content.len()))]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "channel_id": conversation_id,
+                    "content_encrypted": content.as_bytes(),
+                    "mls_group_id": [],
+                    "mls_epoch": 0,
+                    "mls_sender_leaf": 0
+                }))?;
+                let frame = Frame::new(frames::MESSAGE_SEND, 0, Bytes::from(payload));
+                let stream_id = conversation_stream_id(conversation_id);
+                self.send_frame(stream_id, &frame).await
+            },
+        )
+        .await
     }
 
     pub async fn send_reaction(
@@ -133,15 +163,22 @@ impl WtTestClient {
         emoji: &str,
         action: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "channel_id": conversation_id,
-            "message_id": message_id,
-            "emoji": emoji,
-            "action": action
-        }))?;
-        let frame = Frame::new(frames::MESSAGE_REACTION, 0, Bytes::from(payload));
-        let stream_id = conversation_stream_id(conversation_id);
-        self.send_frame(stream_id, &frame).await
+        measure_async_result(
+            "wt.reaction_send",
+            perf_meta(&[("action", serde_json::json!(action))]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "channel_id": conversation_id,
+                    "message_id": message_id,
+                    "emoji": emoji,
+                    "action": action
+                }))?;
+                let frame = Frame::new(frames::MESSAGE_REACTION, 0, Bytes::from(payload));
+                let stream_id = conversation_stream_id(conversation_id);
+                self.send_frame(stream_id, &frame).await
+            },
+        )
+        .await
     }
 
     pub async fn send_thread_reply(
@@ -150,16 +187,23 @@ impl WtTestClient {
         thread_id: &str,
         content: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "channel_id": conversation_id,
-            "thread_id": thread_id,
-            "content_encrypted": content.as_bytes(),
-            "mls_epoch": 0,
-            "mls_sender_leaf": 0
-        }))?;
-        let frame = Frame::new(frames::THREAD_REPLY, 0, Bytes::from(payload));
-        let stream_id = conversation_stream_id(conversation_id);
-        self.send_frame(stream_id, &frame).await
+        measure_async_result(
+            "wt.thread_reply_send",
+            perf_meta(&[("content_bytes", serde_json::json!(content.len()))]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "channel_id": conversation_id,
+                    "thread_id": thread_id,
+                    "content_encrypted": content.as_bytes(),
+                    "mls_epoch": 0,
+                    "mls_sender_leaf": 0
+                }))?;
+                let frame = Frame::new(frames::THREAD_REPLY, 0, Bytes::from(payload));
+                let stream_id = conversation_stream_id(conversation_id);
+                self.send_frame(stream_id, &frame).await
+            },
+        )
+        .await
     }
 
     pub async fn request_history(
@@ -190,14 +234,24 @@ impl WtTestClient {
         before_seq: u64,
         limit: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let payload = rmp_serde::to_vec_named(&serde_json::json!({
-            "conversation_id": conversation_id,
-            "before_seq": before_seq,
-            "limit": limit,
-            "thread_id": thread_id,
-        }))?;
-        let frame = Frame::new(frames::HISTORY_REQUEST, 0, Bytes::from(payload));
-        self.send_frame(WS_STREAM_SYNC, &frame).await
+        measure_async_result(
+            "wt.history_request",
+            perf_meta(&[
+                ("limit", serde_json::json!(limit)),
+                ("thread", serde_json::json!(thread_id.is_some())),
+            ]),
+            async {
+                let payload = rmp_serde::to_vec_named(&serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "before_seq": before_seq,
+                    "limit": limit,
+                    "thread_id": thread_id,
+                }))?;
+                let frame = Frame::new(frames::HISTORY_REQUEST, 0, Bytes::from(payload));
+                self.send_frame(WS_STREAM_SYNC, &frame).await
+            },
+        )
+        .await
     }
 
     async fn send_frame(
@@ -249,20 +303,35 @@ impl WtTestClient {
         &mut self,
         timeout_ms: u64,
     ) -> Result<(u16, Frame), Box<dyn std::error::Error>> {
-        let received = timeout(Duration::from_millis(timeout_ms), self.frame_rx.recv())
-            .await?
-            .ok_or("WebTransport session closed")?;
-        Ok((received.stream_id, received.frame))
+        measure_async_result(
+            "wt.recv_frame",
+            perf_meta(&[("timeout_ms", serde_json::json!(timeout_ms))]),
+            async {
+                let received = timeout(Duration::from_millis(timeout_ms), self.frame_rx.recv())
+                    .await?
+                    .ok_or("WebTransport session closed")?;
+                Ok((received.stream_id, received.frame))
+            },
+        )
+        .await
     }
 
     pub async fn recv_opened_stream(
         &mut self,
         timeout_ms: u64,
     ) -> Result<u16, Box<dyn std::error::Error>> {
-        let stream_id = timeout(Duration::from_millis(timeout_ms), self.opened_stream_rx.recv())
-            .await?
-            .ok_or("WebTransport session closed before stream opened")?;
-        Ok(stream_id)
+        measure_async_result(
+            "wt.recv_opened_stream",
+            perf_meta(&[("timeout_ms", serde_json::json!(timeout_ms))]),
+            async {
+                let stream_id =
+                    timeout(Duration::from_millis(timeout_ms), self.opened_stream_rx.recv())
+                        .await?
+                        .ok_or("WebTransport session closed before stream opened")?;
+                Ok(stream_id)
+            },
+        )
+        .await
     }
 
     pub async fn recv_frame_of_type(
@@ -270,27 +339,40 @@ impl WtTestClient {
         frame_type: u8,
         timeout_ms: u64,
     ) -> Result<(u16, Frame), Box<dyn std::error::Error>> {
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
-        loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(format!("Timeout waiting for frame type 0x{frame_type:02x}").into());
-            }
+        measure_async_result(
+            "wt.recv_frame_of_type",
+            perf_meta(&[
+                ("frame_type", serde_json::json!(frame_type_name(frame_type))),
+                ("timeout_ms", serde_json::json!(timeout_ms)),
+            ]),
+            async {
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+                loop {
+                    let remaining =
+                        deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(
+                            format!("Timeout waiting for frame type 0x{frame_type:02x}").into()
+                        );
+                    }
 
-            let (stream_id, frame) = self.recv_frame(remaining.as_millis() as u64).await?;
-            if frame.frame_type() == frames::ERROR && frame_type != frames::ERROR {
-                let err = decode_payload::<wire_protocol::schema::system::ErrorFrame>(&frame)
-                    .map(|payload| format!("{} (code {})", payload.message, payload.code))
-                    .unwrap_or_else(|_| "unable to decode error payload".to_string());
-                return Err(format!(
-                    "Received ERROR frame while waiting for type 0x{frame_type:02x}: {err}"
-                )
-                .into());
+                    let (stream_id, frame) = self.recv_frame(remaining.as_millis() as u64).await?;
+                    if frame.frame_type() == frames::ERROR && frame_type != frames::ERROR {
+                        let err = decode_payload::<wire_protocol::schema::system::ErrorFrame>(&frame)
+                            .map(|payload| format!("{} (code {})", payload.message, payload.code))
+                            .unwrap_or_else(|_| "unable to decode error payload".to_string());
+                        return Err(format!(
+                            "Received ERROR frame while waiting for type 0x{frame_type:02x}: {err}"
+                        )
+                        .into());
+                    }
+                    if frame.frame_type() == frame_type {
+                        return Ok((stream_id, frame));
+                    }
+                }
             }
-            if frame.frame_type() == frame_type {
-                return Ok((stream_id, frame));
-            }
-        }
+        )
+        .await
     }
 
     pub async fn close(self) -> Result<(), Box<dyn std::error::Error>> {
@@ -506,5 +588,22 @@ pub fn conversation_stream_id(conversation_id: &str) -> u16 {
         WS_STREAM_CONTROL => 1,
         WS_STREAM_SYNC => WS_STREAM_SYNC - 1,
         valid => valid,
+    }
+}
+
+fn frame_type_name(frame_type: u8) -> &'static str {
+    match frame_type {
+        frames::AUTH_REQUEST => "AUTH_REQUEST",
+        frames::AUTH_RESPONSE => "AUTH_RESPONSE",
+        frames::SUBSCRIBE => "SUBSCRIBE",
+        frames::SUBSCRIBE_ACK => "SUBSCRIBE_ACK",
+        frames::MESSAGE_SEND => "MESSAGE_SEND",
+        frames::MESSAGE_REACTION => "MESSAGE_REACTION",
+        frames::THREAD_REPLY => "THREAD_REPLY",
+        frames::HISTORY_REQUEST => "HISTORY_REQUEST",
+        frames::HISTORY_RESPONSE => "HISTORY_RESPONSE",
+        frames::EVENT_BATCH => "EVENT_BATCH",
+        frames::ERROR => "ERROR",
+        _ => "UNKNOWN",
     }
 }

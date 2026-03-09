@@ -40,6 +40,9 @@ Full browser automation testing the web-client UI:
 ./scripts/run-all.sh
 ```
 
+This also writes a performance summary to `artifacts/performance/summary.md` and raw samples to
+`artifacts/performance/*.jsonl`, so you can see which API, realtime, and UI operations were slowest.
+
 ### Rust only
 ```bash
 cargo test -- --test-threads=1
@@ -62,3 +65,18 @@ Services must be running:
 - gateway on :8080/:8443
 - web-client on :3000
 - Infrastructure (postgres, nats, scylladb, etc.)
+
+## Performance Telemetry
+
+The integration harness records timing samples while the normal suites run:
+
+- Rust contract/protocol clients emit API and WebTransport timings to `artifacts/performance/rust-samples.jsonl`
+- Playwright emits full test durations plus key CJM steps to `artifacts/performance/e2e-samples.jsonl`
+- `./scripts/run-all.sh` aggregates the samples into `artifacts/performance/summary.md`
+
+Use the summary to spot:
+
+- slow auth/setup paths
+- slow workspace/channel creation
+- slow realtime delivery and history fetches
+- slow page reload / persistence recovery flows

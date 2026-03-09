@@ -7,6 +7,7 @@ import {
   createWorkspaceViaApi,
   loginViaUI,
 } from './helpers';
+const { measureE2E } = require('./perf.cjs');
 
 type TransportAudit = {
   webTransportUrls: string[];
@@ -148,32 +149,37 @@ async function newAuditedPage(browser: Browser): Promise<{
 
 test.describe('Transport', () => {
   test('browser uses WebTransport for gateway messaging instead of gateway WebSocket fallback', async ({ browser }) => {
+    const perf = test.info();
     const email = randomEmail();
     const password = 'SecurePass123!';
-    const auth = await registerUserViaApi(email, password, randomName());
-    await createWorkspaceViaApi(auth.access_token, randomWorkspaceName());
+    const auth = await registerUserViaApi(email, password, randomName(), perf);
+    await createWorkspaceViaApi(auth.access_token, randomWorkspaceName(), perf);
 
     const { context, page, consoleLogs } = await newAuditedPage(browser);
 
-    await loginViaUI(page, email, password);
+    await loginViaUI(page, email, password, perf);
     await page.locator('.workspace-list li a').first().click();
     await expect(page).toHaveURL(/\/#\/workspace\//);
     await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
     await page.locator('.channel-item').filter({ hasText: 'general' }).click();
 
     const messageText = `WebTransport only ${Date.now()}`;
-    await page.locator('textarea[placeholder="Type a message..."]').fill(messageText);
-    await page.locator('button').filter({ hasText: /^Send$/ }).click();
-    await expect(page.locator('.message-content').filter({ hasText: messageText })).toBeVisible({
-      timeout: 10000,
+    await measureE2E(perf, 'transport.webtransport_send_visible_ui', { phase: 'realtime' }, async () => {
+      await page.locator('textarea[placeholder="Type a message..."]').fill(messageText);
+      await page.locator('button').filter({ hasText: /^Send$/ }).click();
+      await expect(page.locator('.message-content').filter({ hasText: messageText })).toBeVisible({
+        timeout: 10000,
+      });
     });
 
-    await page.reload();
-    await expect(page).toHaveURL(/\/#\/workspace\//);
-    await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
-    await page.locator('.channel-item').filter({ hasText: 'general' }).click();
-    await expect(page.locator('.message-content').filter({ hasText: messageText })).toBeVisible({
-      timeout: 15000,
+    await measureE2E(perf, 'transport.webtransport_reload_restore_ui', { phase: 'reload' }, async () => {
+      await page.reload();
+      await expect(page).toHaveURL(/\/#\/workspace\//);
+      await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
+      await page.locator('.channel-item').filter({ hasText: 'general' }).click();
+      await expect(page.locator('.message-content').filter({ hasText: messageText })).toBeVisible({
+        timeout: 15000,
+      });
     });
 
     await expectWebTransportOnly(page, consoleLogs);
@@ -182,17 +188,18 @@ test.describe('Transport', () => {
   });
 
   test('cross-tab real-time delivery stays on WebTransport in both tabs', async ({ browser }) => {
+    const perf = test.info();
     const email = randomEmail();
     const password = 'SecurePass123!';
     const name = randomName();
-    const auth = await registerUserViaApi(email, password, name);
-    await createWorkspaceViaApi(auth.access_token, randomWorkspaceName());
+    const auth = await registerUserViaApi(email, password, name, perf);
+    await createWorkspaceViaApi(auth.access_token, randomWorkspaceName(), perf);
 
     const auditedPage1 = await newAuditedPage(browser);
     const auditedPage2 = await newAuditedPage(browser);
 
-    await loginViaUI(auditedPage1.page, email, password);
-    await loginViaUI(auditedPage2.page, email, password);
+    await loginViaUI(auditedPage1.page, email, password, perf);
+    await loginViaUI(auditedPage2.page, email, password, perf);
 
     await auditedPage1.page.locator('.workspace-list li a').first().click();
     await auditedPage2.page.locator('.workspace-list li a').first().click();
@@ -210,11 +217,13 @@ test.describe('Transport', () => {
     await waitForSubscription(auditedPage2.consoleLogs);
 
     const messageText = `WT realtime ${Date.now()}`;
-    await auditedPage1.page.locator('textarea[placeholder="Type a message..."]').fill(messageText);
-    await auditedPage1.page.locator('button').filter({ hasText: /^Send$/ }).click();
-    await expect(
-      auditedPage2.page.locator('.message-content').filter({ hasText: messageText }),
-    ).toBeVisible({ timeout: 15000 });
+    await measureE2E(perf, 'transport.webtransport_cross_tab_delivery_ui', { phase: 'realtime' }, async () => {
+      await auditedPage1.page.locator('textarea[placeholder="Type a message..."]').fill(messageText);
+      await auditedPage1.page.locator('button').filter({ hasText: /^Send$/ }).click();
+      await expect(
+        auditedPage2.page.locator('.message-content').filter({ hasText: messageText }),
+      ).toBeVisible({ timeout: 15000 });
+    });
 
     await expectWebTransportOnly(auditedPage1.page, auditedPage1.consoleLogs);
     await expectWebTransportOnly(auditedPage2.page, auditedPage2.consoleLogs);

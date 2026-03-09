@@ -4,6 +4,7 @@ use serde_json::Value;
 use tokio::time::{sleep, Duration};
 
 use crate::fixtures::API_BASE;
+use crate::perf::{measure_async_result, perf_meta, record_perf_sample};
 
 const AUTH_RATE_LIMIT_RETRIES: usize = 10;
 const AUTH_RATE_LIMIT_DELAY: Duration = Duration::from_millis(1_100);
@@ -78,6 +79,7 @@ impl HttpTestClient {
 
     async fn send_with_rate_limit_retry<F>(
         &self,
+        operation: &'static str,
         mut build: F,
     ) -> Result<reqwest::Response, reqwest::Error>
     where
@@ -99,12 +101,22 @@ impl HttpTestClient {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned);
             let body = resp.text().await.unwrap_or_default();
-            sleep(resolve_rate_limit_delay(
+            let delay = resolve_rate_limit_delay(
                 header_value.as_deref(),
                 &body,
                 attempt,
-            ))
-            .await;
+            );
+            record_perf_sample(
+                "http.auth_rate_limit_wait",
+                delay,
+                std::panic::Location::caller(),
+                "ok",
+                perf_meta(&[
+                    ("attempt", serde_json::json!(attempt + 1)),
+                    ("operation", serde_json::json!(operation)),
+                ]),
+            );
+            sleep(delay).await;
         }
 
         unreachable!("auth retry loop must return before exhausting")
@@ -116,20 +128,27 @@ impl HttpTestClient {
         password: &str,
         display_name: &str,
     ) -> Result<RegisterResponse, reqwest::Error> {
-        let resp = self
-            .send_with_rate_limit_retry(|| {
-                self.client
-                    .post(format!("{}/auth/register", self.base_url))
-                    .json(&RegisterRequest {
-                        email: email.to_string(),
-                        password: password.to_string(),
-                        display_name: display_name.to_string(),
+        measure_async_result(
+            "http.register",
+            perf_meta(&[("route", serde_json::json!("/auth/register"))]),
+            async {
+                let resp = self
+                    .send_with_rate_limit_retry("http.register", || {
+                        self.client
+                            .post(format!("{}/auth/register", self.base_url))
+                            .json(&RegisterRequest {
+                                email: email.to_string(),
+                                password: password.to_string(),
+                                display_name: display_name.to_string(),
+                            })
                     })
-            })
-            .await?
-            .json::<RegisterResponse>()
-            .await?;
-        Ok(resp)
+                    .await?
+                    .json::<RegisterResponse>()
+                    .await?;
+                Ok(resp)
+            },
+        )
+        .await
     }
 
     pub async fn register_and_login(
@@ -147,18 +166,26 @@ impl HttpTestClient {
         email: &str,
         password: &str,
     ) -> Result<AuthResponse, reqwest::Error> {
-        let resp = self
-            .send_with_rate_limit_retry(|| {
-                self.client
-                    .post(format!("{}/auth/login", self.base_url))
-                    .json(&LoginRequest {
-                        email: email.to_string(),
-                        password: password.to_string(),
+        let resp = measure_async_result(
+            "http.login",
+            perf_meta(&[("route", serde_json::json!("/auth/login"))]),
+            async {
+                let resp = self
+                    .send_with_rate_limit_retry("http.login", || {
+                        self.client
+                            .post(format!("{}/auth/login", self.base_url))
+                            .json(&LoginRequest {
+                                email: email.to_string(),
+                                password: password.to_string(),
+                            })
                     })
-            })
-            .await?
-            .json::<AuthResponse>()
-            .await?;
+                    .await?
+                    .json::<AuthResponse>()
+                    .await?;
+                Ok(resp)
+            },
+        )
+        .await?;
         self.token = Some(resp.token.clone());
         self.user_id = Some(resp.user_id.clone());
         Ok(resp)
@@ -168,40 +195,62 @@ impl HttpTestClient {
         &mut self,
         refresh_token: &str,
     ) -> Result<AuthResponse, reqwest::Error> {
-        let resp = self
-            .send_with_rate_limit_retry(|| {
-                self.client
-                    .post(format!("{}/auth/refresh", self.base_url))
-                    .json(&serde_json::json!({ "refresh_token": refresh_token }))
-            })
-            .await?
-            .json::<AuthResponse>()
-            .await?;
+        let resp = measure_async_result(
+            "http.refresh",
+            perf_meta(&[("route", serde_json::json!("/auth/refresh"))]),
+            async {
+                let resp = self
+                    .send_with_rate_limit_retry("http.refresh", || {
+                        self.client
+                            .post(format!("{}/auth/refresh", self.base_url))
+                            .json(&serde_json::json!({ "refresh_token": refresh_token }))
+                    })
+                    .await?
+                    .json::<AuthResponse>()
+                    .await?;
+                Ok(resp)
+            },
+        )
+        .await?;
         self.token = Some(resp.token.clone());
         Ok(resp)
     }
 
     pub async fn create_workspace(&self, name: &str) -> Result<WorkspaceResponse, reqwest::Error> {
-        self.client
-            .post(format!("{}/workspaces", self.base_url))
-            .header("Authorization", self.auth_header())
-            .json(&serde_json::json!({ "name": name }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.create_workspace",
+            perf_meta(&[("route", serde_json::json!("/workspaces"))]),
+            async {
+                self.client
+                    .post(format!("{}/workspaces", self.base_url))
+                    .header("Authorization", self.auth_header())
+                    .json(&serde_json::json!({ "name": name }))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn list_workspaces(&self) -> Result<Vec<WorkspaceResponse>, reqwest::Error> {
-        self.client
-            .get(format!("{}/workspaces", self.base_url))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.list_workspaces",
+            perf_meta(&[("route", serde_json::json!("/workspaces"))]),
+            async {
+                self.client
+                    .get(format!("{}/workspaces", self.base_url))
+                    .header("Authorization", self.auth_header())
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn create_channel(
@@ -210,59 +259,90 @@ impl HttpTestClient {
         name: &str,
         channel_type: &str,
     ) -> Result<ChannelResponse, reqwest::Error> {
-        self.client
-            .post(format!(
-                "{}/workspaces/{}/channels",
-                self.base_url, workspace_id
-            ))
-            .header("Authorization", self.auth_header())
-            .json(&serde_json::json!({
-                "name": name,
-                "channel_type": channel_type,
-                "description": ""
-            }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.create_channel",
+            perf_meta(&[
+                ("route", serde_json::json!("/workspaces/{workspace_id}/channels")),
+                ("channel_type", serde_json::json!(channel_type)),
+            ]),
+            async {
+                self.client
+                    .post(format!(
+                        "{}/workspaces/{}/channels",
+                        self.base_url, workspace_id
+                    ))
+                    .header("Authorization", self.auth_header())
+                    .json(&serde_json::json!({
+                        "name": name,
+                        "channel_type": channel_type,
+                        "description": ""
+                    }))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn list_channels(
         &self,
         workspace_id: &str,
     ) -> Result<Vec<ChannelResponse>, reqwest::Error> {
-        self.client
-            .get(format!(
-                "{}/workspaces/{}/channels",
-                self.base_url, workspace_id
-            ))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.list_channels",
+            perf_meta(&[("route", serde_json::json!("/workspaces/{workspace_id}/channels"))]),
+            async {
+                self.client
+                    .get(format!(
+                        "{}/workspaces/{}/channels",
+                        self.base_url, workspace_id
+                    ))
+                    .header("Authorization", self.auth_header())
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn join_channel(&self, channel_id: &str) -> Result<(), reqwest::Error> {
-        self.client
-            .post(format!("{}/channels/{}/join", self.base_url, channel_id))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+        measure_async_result(
+            "http.join_channel",
+            perf_meta(&[("route", serde_json::json!("/channels/{channel_id}/join"))]),
+            async {
+                self.client
+                    .post(format!("{}/channels/{}/join", self.base_url, channel_id))
+                    .header("Authorization", self.auth_header())
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     pub async fn leave_channel(&self, channel_id: &str) -> Result<(), reqwest::Error> {
-        self.client
-            .post(format!("{}/channels/{}/leave", self.base_url, channel_id))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+        measure_async_result(
+            "http.leave_channel",
+            perf_meta(&[("route", serde_json::json!("/channels/{channel_id}/leave"))]),
+            async {
+                self.client
+                    .post(format!("{}/channels/{}/leave", self.base_url, channel_id))
+                    .header("Authorization", self.auth_header())
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     pub async fn create_dm(
@@ -270,30 +350,44 @@ impl HttpTestClient {
         workspace_id: &str,
         user_ids: &[&str],
     ) -> Result<ChannelResponse, reqwest::Error> {
-        self.client
-            .post(format!("{}/workspaces/{}/dm", self.base_url, workspace_id))
-            .header("Authorization", self.auth_header())
-            .json(&serde_json::json!({ "user_ids": user_ids }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.create_dm",
+            perf_meta(&[("route", serde_json::json!("/workspaces/{workspace_id}/dm"))]),
+            async {
+                self.client
+                    .post(format!("{}/workspaces/{}/dm", self.base_url, workspace_id))
+                    .header("Authorization", self.auth_header())
+                    .json(&serde_json::json!({ "user_ids": user_ids }))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn create_invite(&self, workspace_id: &str) -> Result<Value, reqwest::Error> {
-        self.client
-            .post(format!(
-                "{}/workspaces/{}/invite",
-                self.base_url, workspace_id
-            ))
-            .header("Authorization", self.auth_header())
-            .json(&serde_json::json!({}))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.create_invite",
+            perf_meta(&[("route", serde_json::json!("/workspaces/{workspace_id}/invite"))]),
+            async {
+                self.client
+                    .post(format!(
+                        "{}/workspaces/{}/invite",
+                        self.base_url, workspace_id
+                    ))
+                    .header("Authorization", self.auth_header())
+                    .json(&serde_json::json!({}))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn accept_invite(
@@ -301,26 +395,40 @@ impl HttpTestClient {
         workspace_id: &str,
         invite_code: &str,
     ) -> Result<Value, reqwest::Error> {
-        self.client
-            .post(format!(
-                "{}/workspaces/{}/join",
-                self.base_url, workspace_id
-            ))
-            .header("Authorization", self.auth_header())
-            .json(&serde_json::json!({ "code": invite_code }))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
+        measure_async_result(
+            "http.accept_invite",
+            perf_meta(&[("route", serde_json::json!("/workspaces/{workspace_id}/join"))]),
+            async {
+                self.client
+                    .post(format!(
+                        "{}/workspaces/{}/join",
+                        self.base_url, workspace_id
+                    ))
+                    .header("Authorization", self.auth_header())
+                    .json(&serde_json::json!({ "code": invite_code }))
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .json()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn get_raw(&self, path: &str) -> Result<reqwest::Response, reqwest::Error> {
-        self.client
-            .get(format!("{}{}", self.base_url, path))
-            .header("Authorization", self.auth_header())
-            .send()
-            .await
+        measure_async_result(
+            "http.get_raw",
+            perf_meta(&[("route", serde_json::json!(path))]),
+            async {
+                self.client
+                    .get(format!("{}{}", self.base_url, path))
+                    .header("Authorization", self.auth_header())
+                    .send()
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn post_raw(
@@ -328,12 +436,19 @@ impl HttpTestClient {
         path: &str,
         body: &Value,
     ) -> Result<reqwest::Response, reqwest::Error> {
-        self.client
-            .post(format!("{}{}", self.base_url, path))
-            .header("Authorization", self.auth_header())
-            .json(body)
-            .send()
-            .await
+        measure_async_result(
+            "http.post_raw",
+            perf_meta(&[("route", serde_json::json!(path))]),
+            async {
+                self.client
+                    .post(format!("{}{}", self.base_url, path))
+                    .header("Authorization", self.auth_header())
+                    .json(body)
+                    .send()
+                    .await
+            },
+        )
+        .await
     }
 }
 

@@ -7,7 +7,7 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   workers: 1,
-  reporter: 'html',
+  reporter: [['html'], ['./perf-reporter.cjs']],
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
