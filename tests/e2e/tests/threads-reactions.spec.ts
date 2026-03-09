@@ -44,6 +44,96 @@ test.describe('Threads and Reactions', () => {
     await expect(message.locator('.reaction-chip')).toBeVisible({ timeout: 5000 });
   });
 
+  test('reaction survives page reload', async ({ page }) => {
+    await loginViaUI(page, email, password);
+    await page.locator('.workspace-list li a').first().click();
+    await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
+    await page.locator('.channel-item').filter({ hasText: 'general' }).click();
+
+    const msg = `Reaction persists ${Date.now()}`;
+    await page.locator('textarea[placeholder="Type a message..."]').fill(msg);
+    await page.locator('button').filter({ hasText: /^Send$/ }).click();
+
+    const message = page.locator('.message').filter({ hasText: msg }).last();
+    await expect(message.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 10000 });
+    await message.hover();
+
+    const addReactionBtn = message.locator('.add-reaction-btn');
+    await expect(addReactionBtn).toBeVisible({ timeout: 5000 });
+    await addReactionBtn.click();
+
+    const picker = page.locator('.picker-popover');
+    await expect(picker).toBeVisible({ timeout: 5000 });
+    await picker.locator('.emoji-grid .emoji-btn').first().click();
+
+    const reactionChip = message.locator('.reaction-chip');
+    await expect(reactionChip).toBeVisible({ timeout: 5000 });
+    const reactionEmoji = await reactionChip.locator('.reaction-emoji').textContent();
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/#\/workspace\//);
+    await expect(page.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible({ timeout: 10000 });
+    await page.locator('.channel-item').filter({ hasText: 'general' }).click();
+
+    const reloadedMessage = page.locator('.message').filter({ hasText: msg }).last();
+    await expect(reloadedMessage.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+    await expect(reloadedMessage.locator('.reaction-chip')).toBeVisible({ timeout: 15000 });
+    await expect(reloadedMessage.locator('.reaction-emoji')).toHaveText(reactionEmoji ?? '', { timeout: 15000 });
+  });
+
+  test('reaction appears in another tab and survives reload there', async ({ browser }) => {
+    const context = await browser.newContext();
+    const page1 = await context.newPage();
+    const page2 = await context.newPage();
+
+    await loginViaUI(page1, email, password);
+    await loginViaUI(page2, email, password);
+
+    await page1.locator('.workspace-list li a').first().click();
+    await page2.locator('.workspace-list li a').first().click();
+    await expect(page1.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
+    await expect(page2.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible();
+    await page1.locator('.channel-item').filter({ hasText: 'general' }).click();
+    await page2.locator('.channel-item').filter({ hasText: 'general' }).click();
+
+    const msg = `Cross-tab reaction ${Date.now()}`;
+    await page1.locator('textarea[placeholder="Type a message..."]').fill(msg);
+    await page1.locator('button').filter({ hasText: /^Send$/ }).click();
+
+    const page1Message = page1.locator('.message').filter({ hasText: msg }).last();
+    const page2Message = page2.locator('.message').filter({ hasText: msg }).last();
+    await expect(page1Message.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 10000 });
+    await expect(page2Message.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+
+    await page1Message.hover();
+    const addReactionBtn = page1Message.locator('.add-reaction-btn');
+    await expect(addReactionBtn).toBeVisible({ timeout: 5000 });
+    await addReactionBtn.click();
+
+    const picker = page1.locator('.picker-popover');
+    await expect(picker).toBeVisible({ timeout: 5000 });
+    await picker.locator('.emoji-grid .emoji-btn').first().click();
+
+    const reactionChip = page1Message.locator('.reaction-chip');
+    await expect(reactionChip).toBeVisible({ timeout: 5000 });
+    const reactionEmoji = await reactionChip.locator('.reaction-emoji').textContent();
+
+    await expect(page2Message.locator('.reaction-chip')).toBeVisible({ timeout: 15000 });
+    await expect(page2Message.locator('.reaction-emoji')).toHaveText(reactionEmoji ?? '', { timeout: 15000 });
+
+    await page2.reload();
+    await expect(page2).toHaveURL(/\/#\/workspace\//);
+    await expect(page2.locator('.channel-item').filter({ hasText: 'general' })).toBeVisible({ timeout: 10000 });
+    await page2.locator('.channel-item').filter({ hasText: 'general' }).click();
+
+    const reloadedPage2Message = page2.locator('.message').filter({ hasText: msg }).last();
+    await expect(reloadedPage2Message.locator('.message-content').filter({ hasText: msg })).toBeVisible({ timeout: 15000 });
+    await expect(reloadedPage2Message.locator('.reaction-chip')).toBeVisible({ timeout: 15000 });
+    await expect(reloadedPage2Message.locator('.reaction-emoji')).toHaveText(reactionEmoji ?? '', { timeout: 15000 });
+
+    await context.close();
+  });
+
   test('open thread panel and reply', async ({ page }) => {
     await loginViaUI(page, email, password);
     await page.locator('.workspace-list li a').first().click();
