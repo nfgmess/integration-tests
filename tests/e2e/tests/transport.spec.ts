@@ -119,6 +119,18 @@ async function expectWebTransportOnly(page: Page, consoleLogs: string[]): Promis
   ).toBeFalsy();
 }
 
+async function waitForSubscription(consoleLogs: string[]): Promise<void> {
+  await expect
+    .poll(
+      () => consoleLogs.some((line) => line.includes('Subscribed to channel:')),
+      {
+        timeout: 15000,
+        message: 'expected a subscribe acknowledgement from the gateway',
+      },
+    )
+    .toBeTruthy();
+}
+
 async function newAuditedPage(browser: Browser): Promise<{
   context: BrowserContext;
   page: Page;
@@ -194,6 +206,8 @@ test.describe('Transport', () => {
 
     await auditedPage1.page.locator('.channel-item').filter({ hasText: 'general' }).click();
     await auditedPage2.page.locator('.channel-item').filter({ hasText: 'general' }).click();
+    await waitForSubscription(auditedPage1.consoleLogs);
+    await waitForSubscription(auditedPage2.consoleLogs);
 
     const messageText = `WT realtime ${Date.now()}`;
     await auditedPage1.page.locator('textarea[placeholder="Type a message..."]').fill(messageText);
