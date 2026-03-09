@@ -7,6 +7,8 @@ use crate::fixtures::API_BASE;
 
 const AUTH_RATE_LIMIT_RETRIES: usize = 10;
 const AUTH_RATE_LIMIT_DELAY: Duration = Duration::from_millis(1_100);
+const AUTH_RATE_LIMIT_BUFFER: Duration = Duration::from_secs(1);
+const AUTH_RATE_LIMIT_MAX_DELAY: Duration = Duration::from_secs(95);
 
 #[derive(Debug, Clone)]
 pub struct HttpTestClient {
@@ -91,7 +93,18 @@ impl HttpTestClient {
                 return resp.error_for_status();
             }
 
-            sleep(AUTH_RATE_LIMIT_DELAY).await;
+            let header_value = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let body = resp.text().await.unwrap_or_default();
+            sleep(resolve_rate_limit_delay(
+                header_value.as_deref(),
+                &body,
+                attempt,
+            ))
+            .await;
         }
 
         unreachable!("auth retry loop must return before exhausting")
@@ -322,4 +335,42 @@ impl HttpTestClient {
             .send()
             .await
     }
+}
+
+fn parse_retry_after_header(value: &str) -> Option<Duration> {
+    value.parse::<u64>().ok().map(Duration::from_secs)
+}
+
+fn parse_retry_after_body(body: &str) -> Option<Duration> {
+    let body = body.to_ascii_lowercase();
+    let wait_idx = body.find("wait for ")?;
+    let suffix = &body[wait_idx + "wait for ".len()..];
+
+    let digits_end = suffix.find(|c: char| !c.is_ascii_digit()).unwrap_or(suffix.len());
+    if digits_end == 0 {
+        return None;
+    }
+
+    let amount = suffix[..digits_end].parse::<u64>().ok()?;
+    let unit = suffix[digits_end..].trim_start();
+
+    if unit.starts_with("ms") || unit.starts_with("millisecond") {
+        return Some(Duration::from_millis(amount));
+    }
+
+    Some(Duration::from_secs(amount))
+}
+
+fn resolve_rate_limit_delay(header: Option<&str>, body: &str, attempt: usize) -> Duration {
+    let header_delay = header
+        .and_then(parse_retry_after_header)
+        .unwrap_or(Duration::ZERO);
+    let body_delay = parse_retry_after_body(body).unwrap_or(Duration::ZERO);
+    let fallback_delay = AUTH_RATE_LIMIT_DELAY.saturating_mul((attempt as u32) + 1);
+
+    std::cmp::min(
+        AUTH_RATE_LIMIT_MAX_DELAY,
+        std::cmp::max(header_delay, std::cmp::max(body_delay, fallback_delay))
+            + AUTH_RATE_LIMIT_BUFFER,
+    )
 }

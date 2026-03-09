@@ -3,10 +3,60 @@ import { type Page, expect } from '@playwright/test';
 const API_BASE = process.env.API_BASE || 'http://localhost:8081/api/v1';
 const AUTH_RETRY_ATTEMPTS = 10;
 const AUTH_RETRY_DELAY_MS = 1100;
+const AUTH_RETRY_BUFFER_MS = 1000;
+const AUTH_RETRY_MAX_DELAY_MS = 95_000;
 const UI_AUTH_COOLDOWN_MS = 1200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterHeader(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const retryAt = Date.parse(value);
+  if (Number.isNaN(retryAt)) {
+    return null;
+  }
+
+  return Math.max(0, retryAt - Date.now());
+}
+
+function parseRetryAfterBody(body: string): number | null {
+  const waitMatch = body.match(/wait for\s+(\d+)\s*(ms|milliseconds|s|sec|secs|seconds)?/i);
+  if (!waitMatch) {
+    return null;
+  }
+
+  const amount = Number(waitMatch[1]);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return null;
+  }
+
+  const unit = waitMatch[2]?.toLowerCase();
+  if (unit === 'ms' || unit === 'milliseconds') {
+    return amount;
+  }
+
+  return amount * 1000;
+}
+
+function resolveRateLimitDelay(response: Response, body: string, attempt: number): number {
+  const headerDelay = parseRetryAfterHeader(response.headers.get('retry-after'));
+  const bodyDelay = parseRetryAfterBody(body);
+  const fallbackDelay = AUTH_RETRY_DELAY_MS * (attempt + 1);
+
+  return Math.min(
+    AUTH_RETRY_MAX_DELAY_MS,
+    Math.max(headerDelay ?? 0, bodyDelay ?? 0, fallbackDelay) + AUTH_RETRY_BUFFER_MS,
+  );
 }
 
 async function fetchWithRateLimitRetry(url: string, init: RequestInit): Promise<Response> {
@@ -20,8 +70,8 @@ async function fetchWithRateLimitRetry(url: string, init: RequestInit): Promise<
       return response;
     }
 
-    await response.text().catch(() => '');
-    await sleep(AUTH_RETRY_DELAY_MS);
+    const body = await response.text().catch(() => '');
+    await sleep(resolveRateLimitDelay(response, body, attempt));
   }
 
   throw new Error(`Exceeded auth retry budget for ${url}`);
