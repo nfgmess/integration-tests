@@ -168,10 +168,33 @@ impl WtTestClient {
         before_seq: u64,
         limit: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.request_history_inner(conversation_id, None, before_seq, limit)
+            .await
+    }
+
+    pub async fn request_thread_history(
+        &mut self,
+        conversation_id: &str,
+        thread_id: &str,
+        before_seq: u64,
+        limit: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.request_history_inner(conversation_id, Some(thread_id), before_seq, limit)
+            .await
+    }
+
+    async fn request_history_inner(
+        &mut self,
+        conversation_id: &str,
+        thread_id: Option<&str>,
+        before_seq: u64,
+        limit: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let payload = rmp_serde::to_vec_named(&serde_json::json!({
             "conversation_id": conversation_id,
             "before_seq": before_seq,
-            "limit": limit
+            "limit": limit,
+            "thread_id": thread_id,
         }))?;
         let frame = Frame::new(frames::HISTORY_REQUEST, 0, Bytes::from(payload));
         self.send_frame(WS_STREAM_SYNC, &frame).await

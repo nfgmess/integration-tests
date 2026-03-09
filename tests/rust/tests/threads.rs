@@ -4,9 +4,11 @@ use integration_tests::fixtures::{
 use integration_tests::http_client::HttpTestClient;
 use integration_tests::wt_client::WtTestClient;
 use messenger_core::events::payloads::MessageSentPayload;
+use tokio::time::{sleep, Duration};
 use wire_protocol::codec::{WS_STREAM_CONTROL, WS_STREAM_SYNC};
 use wire_protocol::frames;
 use wire_protocol::schema::conversation::EventBatch;
+use wire_protocol::schema::sync::HistoryResponse;
 use wire_protocol::decode_payload;
 
 async fn register_user() -> HttpTestClient {
@@ -121,4 +123,132 @@ async fn send_thread_reply_subscriber_receives_event_batch() {
 
     ws_a.close().await.expect("close A");
     ws_b.close().await.expect("close B");
+}
+
+#[tokio::test]
+async fn thread_history_is_separate_from_channel_history() {
+    let user = register_user().await;
+    let ws = user
+        .create_workspace(&random_workspace_name())
+        .await
+        .expect("create workspace should succeed");
+
+    let channel = user
+        .create_channel(&ws.workspace_id, &random_channel_name(), "public")
+        .await
+        .expect("create channel should succeed");
+
+    let token = user.token.as_deref().expect("user must have token");
+
+    let mut wt = WtTestClient::connect()
+        .await
+        .expect("WebTransport connect should succeed");
+    wt.authenticate(token).await.expect("auth should succeed");
+    wt.recv_frame_of_type(frames::AUTH_RESPONSE, 5000)
+        .await
+        .expect("AUTH_RESPONSE");
+    wt.subscribe(&[&channel.channel_id], Some(&ws.workspace_id))
+        .await
+        .expect("subscribe should succeed");
+    wt.recv_frame_of_type(frames::SUBSCRIBE_ACK, 5000)
+        .await
+        .expect("SUBSCRIBE_ACK");
+
+    wt.send_message(&channel.channel_id, "Parent for persisted thread")
+        .await
+        .expect("send parent message should succeed");
+    let (_, parent_batch) = wt
+        .recv_frame_of_type(frames::EVENT_BATCH, 5000)
+        .await
+        .expect("should receive parent EVENT_BATCH");
+    let parent_batch: EventBatch =
+        decode_payload(&parent_batch).expect("parent EVENT_BATCH should decode");
+    let parent_event = parent_batch.events.first().expect("parent event should exist");
+    let parent_message: MessageSentPayload =
+        rmp_serde::from_slice(&parent_event.payload).expect("parent payload should decode");
+
+    wt.send_thread_reply(
+        &channel.channel_id,
+        &parent_message.message_id.to_string(),
+        "Persisted thread reply",
+    )
+    .await
+    .expect("send thread reply should succeed");
+    let (_, reply_batch) = wt
+        .recv_frame_of_type(frames::EVENT_BATCH, 5000)
+        .await
+        .expect("should receive thread reply EVENT_BATCH");
+    let reply_batch: EventBatch =
+        decode_payload(&reply_batch).expect("reply EVENT_BATCH should decode");
+    let reply_event = reply_batch.events.first().expect("reply event should exist");
+    let reply_message: MessageSentPayload =
+        rmp_serde::from_slice(&reply_event.payload).expect("reply payload should decode");
+    let parent_thread_id = parent_message.message_id.to_string();
+
+    let mut channel_history_ok = false;
+    let mut thread_history_ok = false;
+
+    for _ in 0..10 {
+        wt.request_history(&channel.channel_id, 0, 20)
+            .await
+            .expect("channel history request should succeed");
+        let (channel_history_stream, channel_history_frame) = wt
+            .recv_frame_of_type(frames::HISTORY_RESPONSE, 5000)
+            .await
+            .expect("should receive channel HISTORY_RESPONSE");
+        assert_eq!(channel_history_stream, WS_STREAM_SYNC);
+        let channel_history: HistoryResponse =
+            decode_payload(&channel_history_frame).expect("channel history should decode");
+
+        let channel_messages: Vec<MessageSentPayload> = channel_history
+            .events
+            .iter()
+            .map(|event| rmp_serde::from_slice(&event.payload).expect("channel history payload should decode"))
+            .collect();
+
+        channel_history_ok = channel_history.thread_id.is_none()
+            && channel_messages
+                .iter()
+                .any(|message| message.message_id == parent_message.message_id)
+            && channel_messages
+                .iter()
+                .all(|message| message.thread_id.is_none());
+
+        wt.request_thread_history(&channel.channel_id, &parent_thread_id, 0, 20)
+            .await
+            .expect("thread history request should succeed");
+        let (thread_history_stream, thread_history_frame) = wt
+            .recv_frame_of_type(frames::HISTORY_RESPONSE, 5000)
+            .await
+            .expect("should receive thread HISTORY_RESPONSE");
+        assert_eq!(thread_history_stream, WS_STREAM_SYNC);
+        let thread_history: HistoryResponse =
+            decode_payload(&thread_history_frame).expect("thread history should decode");
+
+        let thread_messages: Vec<MessageSentPayload> = thread_history
+            .events
+            .iter()
+            .map(|event| rmp_serde::from_slice(&event.payload).expect("thread history payload should decode"))
+            .collect();
+
+        thread_history_ok = thread_history.thread_id.as_deref()
+            == Some(parent_thread_id.as_str())
+            && thread_messages
+                .iter()
+                .any(|message| message.message_id == reply_message.message_id)
+            && thread_messages
+                .iter()
+                .all(|message| message.thread_id == Some(parent_message.message_id));
+
+        if channel_history_ok && thread_history_ok {
+            break;
+        }
+
+        sleep(Duration::from_millis(250)).await;
+    }
+
+    assert!(channel_history_ok, "channel history should include only root messages");
+    assert!(thread_history_ok, "thread history should include persisted thread replies");
+
+    wt.close().await.expect("close should succeed");
 }
