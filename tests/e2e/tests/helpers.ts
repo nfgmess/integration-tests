@@ -6,7 +6,6 @@ const AUTH_RETRY_ATTEMPTS = 10;
 const AUTH_RETRY_DELAY_MS = 1100;
 const AUTH_RETRY_BUFFER_MS = 1000;
 const AUTH_RETRY_MAX_DELAY_MS = 95_000;
-const UI_AUTH_COOLDOWN_MS = 1200;
 
 type MaybeTestInfo = TestInfo | undefined;
 
@@ -91,6 +90,11 @@ async function maybeMeasure<T>(
   }
 
   return measureE2E(testInfo, operation, meta, run);
+}
+
+async function waitForWorkspaceHome(page: Page): Promise<void> {
+  await expect(page).toHaveURL(/\/#\/?$/);
+  await expect(page.locator('h2')).toContainText('Your Workspaces');
 }
 
 export function randomEmail(): string {
@@ -237,10 +241,8 @@ export async function loginViaUI(page: Page, email: string, password: string, te
       await page.goto('/#/login');
       await page.locator('input[type="email"]').fill(email);
       await page.locator('input[type="password"]').fill(password);
-      await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
       await page.locator('button[type="submit"]').click();
-      await expect(page).toHaveURL(/\/#\/?$/);
-      await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
+      await waitForWorkspaceHome(page);
     },
   );
 }
@@ -259,10 +261,8 @@ export async function registerViaUI(page: Page, displayName: string, email: stri
       await page.locator('input[type="email"]').fill(email);
       await page.locator('input[type="password"]').first().fill(password);
       await page.locator('input[type="password"]').nth(1).fill(password);
-      await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
       await page.locator('button[type="submit"]').click();
-      await expect(page).toHaveURL(/\/#\/?$/);
-      await page.waitForTimeout(UI_AUTH_COOLDOWN_MS);
+      await waitForWorkspaceHome(page);
     },
   );
 }

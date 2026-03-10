@@ -5,6 +5,18 @@ import {
 } from './helpers';
 const { measureE2E } = require('./perf.cjs');
 
+async function waitForSubscription(consoleLogs: string[], minimumCount: number): Promise<void> {
+  await expect
+    .poll(
+      () => consoleLogs.filter((line) => line.includes('Subscribed to channel:')).length,
+      {
+        timeout: 10000,
+        message: `expected ${minimumCount} subscribe acknowledgements from the gateway`,
+      },
+    )
+    .toBeGreaterThanOrEqual(minimumCount);
+}
+
 test.describe('Messaging', () => {
   test('send a message, refresh, and still see it', async ({ page }) => {
     const email = randomEmail();
@@ -61,10 +73,6 @@ test.describe('Messaging', () => {
     await loginViaUI(page1, email, password, perf);
     await loginViaUI(page2, email, password, perf);
 
-    // Wait for gateway connections to establish
-    await page1.waitForTimeout(3000);
-    await page2.waitForTimeout(2000);
-
     // Navigate both to the workspace
     await page1.locator('.workspace-list li a').first().click();
     await page2.locator('.workspace-list li a').first().click();
@@ -75,9 +83,7 @@ test.describe('Messaging', () => {
     await page1.locator('.channel-item').filter({ hasText: 'general' }).click();
     await page2.locator('.channel-item').filter({ hasText: 'general' }).click();
 
-    // Wait for WS subscription to complete
-    await page1.waitForTimeout(2000);
-    await page2.waitForTimeout(2000);
+    await waitForSubscription(consoleLogs, 2);
 
     // Send message from tab1
     const msgText = `Cross-tab msg ${Date.now()}`;
